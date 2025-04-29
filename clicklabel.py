@@ -1,4 +1,6 @@
+import os
 import cv2
+import time
 import tkinter as tk
 from tkinter import filedialog, simpledialog, ttk
 from PIL import Image, ImageTk
@@ -283,9 +285,15 @@ class VideoAnnotator:
             self.clicks[idx] = tuple(click)
 
     def save_clicks(self):
+        output_dir = "./data/"
+        if os.path.isdir(output_dir) == False:
+            os.makedirs(output_dir)
+            print("Created output directory: {}".format(output_dir))
+        timestr = time.strftime("%Y%m%d-%H%M%S")
+        fname = "{}/clicks_{}.csv".format(output_dir,timestr)
         df = pd.DataFrame(self.clicks, columns=["VideoFile", "Frame", "X", "Y", "Label"])
-        df.to_csv("clicks.csv", index=False)
-        print("Saved clicks to clicks.csv")
+        df.to_csv(fname, index=False)
+        print("Saved clicks to {}".format(fname))
 
     def set_frame_step(self, value):
         self.frame_step = int(value)

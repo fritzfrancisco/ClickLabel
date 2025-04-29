@@ -28,7 +28,7 @@ This Python script provides an interactive video annotation tool using the Pytho
 - `Left Arrow`: Goes back on `Frame Step`. Any annotations done now will overwrite existing ones for these frames
 - Number Keys `1-5`: Define how many annotations will be made in the current frame. Default is `1`
 - `t`: Toggle data table view
-- `q` or `ESC`: Quit application and save annotations to `.csv` file
+- `q` or `ESC`: Quit application and save annotations to an `.csv` file. Output files are created in a `data` directory which is created in the same location as the `clicklabel.py` file.
 
 ## Installation 
 
