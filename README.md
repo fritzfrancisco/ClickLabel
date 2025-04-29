@@ -12,19 +12,15 @@ This Python script provides an interactive video annotation tool using the Pytho
 - Users can play, pause, and navigate frames forward or backward.
 - Frame navigation is configurable with adjustable frame-skip rates.
 
-### 2. Interactive Labeling
+### 2. Click Management
 - **Left-click**: Save the cursor's position (`x`, `y`) on the current frame.
-- **Double-click**: Add labels to specific frame positions, stored in a dictionary.
+- All data can be visualized in a table. Pressing the key `t` on the keyboard toggles between showing and hiding the table. The information can be edited in the table manually by clicking on the corresponding cell and changing it directly. 
 
-### 3. Click Management
-- Tracks a specified number of user clicks per frame, advancing once the threshold is met.
-- **Right-click**: Removes saved clicks from the current frame and plays the video in reverse.
-
-### 4. Annotations and Data Export
+### 3. Annotations and Data Export
 - Stores all clicks and labels with their associated frame numbers and positions.
 - Provides an option to export annotations into a CSV file for further analysis.
 
-### 5. Customizability
+### 4. Customizability
 - Frame-skip rate and required clicks per frame are adjustable via sliders.
 - Displays the current frame number on the video.
 

@@ -1,260 +1,279 @@
 import cv2
-import os
 import tkinter as tk
-from tkinter import filedialog, simpledialog
-import pandas as pd
+from tkinter import filedialog, simpledialog, ttk
 from PIL import Image, ImageTk
-import time
+import pandas as pd
 import argparse
 
-class VideoPlayer:
-    def __init__(self, root, video_path, frame_rate=60, clicks_required=1, click_delay=1):
-        self.cap = cv2.VideoCapture(video_path)
-        self.filename = os.path.basename(video_path)
+class VideoAnnotator:
+    def __init__(self, root, video_path):
         self.root = root
-        self.frame_index = 0
+        self.root.title("Video Annotator")
+        self.root.attributes('-fullscreen', True)
+
+        # Video variables
+        self.video_path = video_path
+        self.cap = cv2.VideoCapture(self.video_path) if self.video_path else None
         self.playing = False
-        self.direction = 1  # 1 for forward, -1 for backward
-        self.saved_clicks = []  # List to store clicked positions: [(frame, x, y)]
-        self.labels = {}  # Dictionary to store labels: {(frame, x, y): label}
-        self.frame_rate = frame_rate  # Frame skip rate
-        self.clicks_required = clicks_required  # Number of clicks required to advance the frame
-        self.clicks_in_current_frame = 0  # Track number of clicks for the current frame
-        self.cursor_x, self.cursor_y = 0, 0
-        self.last_click_time = 0  # Time of the last click
-        self.click_delay = click_delay  # Minimum time between clicks in seconds
-        self.double_click_detected = False  # Flag to track double-clicks
+        self.frame = None
+        self.scale_factor_x = 1
+        self.scale_factor_y = 1
+        self.frame_step = 1
+        self.clicks = []
+        self.frame_idx = 0
 
-        # Get screen size and resize video display accordingly
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight() - 200  # Leave space for controls
+        # UI Elements
+        self.canvas = tk.Canvas(root)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.bind("<Button-1>", self.on_left_click)
+        self.canvas.bind("<Button-3>", self.on_right_click)
+        self.root.bind("<Escape>", self.close_app)
 
-        video_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        video_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        controls_frame = tk.Frame(root)
+        controls_frame.pack(fill=tk.X)
 
-        scale_factor = min(screen_width / video_width, screen_height / video_height)
-        self.display_width = int(video_width * scale_factor)
-        self.display_height = int(video_height * scale_factor)
+        self.load_btn = tk.Button(controls_frame, text="Load Video", command=self.load_video)
+        self.load_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
-        # Setup canvas for video display
-        self.canvas = tk.Canvas(root, width=self.display_width, height=self.display_height)
-        self.canvas.pack()
+        self.play_btn = tk.Button(controls_frame, text="Play", command=self.toggle_play)
+        self.play_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
-        # Bind mouse and key events
-        self.canvas.bind("<Button-1>", self.left_click_start)
-        self.canvas.bind("<ButtonRelease-1>", self.left_click_stop)
-        self.canvas.bind("<Button-3>", self.right_click_start)
-        self.canvas.bind("<ButtonRelease-3>", self.right_click_stop)
-        self.canvas.bind("<Double-Button-1>", self.add_label)  # Double-click to add label
-        self.canvas.bind("<Motion>", self.update_cursor_location)
-        self.root.bind("q", lambda e: self.close_application())
-        self.root.bind("n", lambda e: self.manual_advance())  # Advance manually
+        self.stop_btn = tk.Button(controls_frame, text="Stop", command=self.stop_video)
+        self.stop_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
-    def manual_advance(self):
-        self.frame_index += self.frame_rate
-        self.clicks_in_current_frame = 0
+        self.prev_btn = tk.Button(controls_frame, text="Previous Frame", command=self.prev_frame)
+        self.prev_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
-    def play_video(self):
-        if self.cap.isOpened():
-            # Set the current frame position
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.frame_index)
-            ret, frame = self.cap.read()
+        self.next_btn = tk.Button(controls_frame, text="Next Frame", command=self.advance_frame)
+        self.next_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
-            if ret:
-                # Resize frame to fit display size once
-                frame_resized = cv2.resize(frame, (self.display_width, self.display_height))
-                frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)  # Convert to RGB only once
+        self.toggle_table_btn = tk.Button(controls_frame, text="Hide Table", command=self.toggle_table)
+        self.toggle_table_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
-                img = Image.fromarray(frame_rgb)
-                imgtk = ImageTk.PhotoImage(image=img)
+        self.label_entry = tk.Entry(controls_frame)
+        self.label_entry.pack(side=tk.LEFT, padx=5, pady=5)
+        self.label_entry.insert(0, "Enter label")
 
-                # Update the canvas image only when necessary
-                self.canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
-                self.canvas.image = imgtk
+        self.frame_rate_slider = tk.Scale(controls_frame, from_=1, to=60, orient="horizontal",
+                                          label="Frame Step", command=lambda val: self.set_frame_step(int(val)))
+        self.frame_rate_slider.set(1)
+        self.frame_rate_slider.pack(side=tk.LEFT, padx=5, pady=5)
 
-                # Draw labels and clicks
-                self.draw_labels()
-                self.draw_saved_clicks()
+        self.quit_btn = tk.Button(controls_frame, text="Quit", command=self.close_app)
+        self.quit_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
-                # Display the current frame number
-                self.canvas.create_text(
-                    10, 10, anchor=tk.NW, text=f"Frame: {self.frame_index}", fill="blue", font=("Helvetica", 16, "bold")
-                )
+        # Bind arrow keys
+        self.root.bind("<Right>", lambda e: self.advance_frame())
+        self.root.bind("<Left>", lambda e: self.prev_frame())
+        self.root.bind("t", lambda e: self.toggle_table())
+        self.root.bind("q", lambda e: self.close_app())
 
-            if self.clicks_in_current_frame >= self.clicks_required:
-                if self.direction == 1:
-                    self.frame_index += self.frame_rate
-                elif self.direction == -1:
-                    self.frame_index -= self.frame_rate
-                self.clicks_in_current_frame = 0
-                if self.frame_index < 0:
-                    self.frame_index = 0
-            elif not ret:
-                self.playing = False
+        # Table to display points
+        self.table = ttk.Treeview(root, columns=("Frame", "X", "Y", "Label"), show="headings")
+        for col in ("Frame", "X", "Y", "Label"):
+            self.table.heading(col, text=col)
+            self.table.column(col, width=100)
+        self.table.pack(fill=tk.BOTH, expand=True)
+        self.table.bind('<Double-1>', self.edit_table_entry)
 
-        self.root.after(10, self.play_video)  # Reduced the delay for better responsiveness
+        # Row counter for alternating colors
+        self.row_count = 0
 
-    def save_cursor_location_continuous(self, event):
-        current_time = time.time()
-        # Skip processing if the delay threshold is not met
-        if current_time - self.last_click_time < self.click_delay:
-            return
+        # Configure the tags for alternating row colors
+        self.table.tag_configure('odd', background='white')
+        self.table.tag_configure('even', background='#ededed')
 
-        self.saved_clicks.append((self.frame_index, event.x, event.y))
-        self.clicks_in_current_frame += 1
-        self.last_click_time = current_time
+        if self.cap and self.cap.isOpened():
+            self.load_first_frame()
 
-        # No need for repeated 'after' calls inside this method
-        if self.playing and self.direction == 1:
-            self.save_cursor_location_continuous(event)  # Remove unnecessary `after` calls.
+        self.root.after(30, self.update_loop)
 
-    def start(self):
-        self.playing = True
-
-    def pause(self):
-        self.playing = False
-
-    def left_click_start(self, event):
-        self.double_click_detected = False
-        self.root.after(250, lambda: self.handle_single_click(event))  # Delay to check for double-click
-
-    def handle_single_click(self, event):
-        if not self.double_click_detected:
-            self.direction = 1
-            self.start()
-            self.save_cursor_location_continuous(event)
-
-    def left_click_stop(self, event):
-        self.pause()
-
-    def right_click_stop(self, event):
-        self.pause()  # Stop playback
-        
-    def right_click_start(self, event):
-        # Start reverse playback and remove clicks for the current frame
-        self.direction = -1  # Reverse direction
-        self.start()  # Start playback in reverse
-        self.remove_clicks_continuous(event)  # Begin the continuous removal process
-
-    def remove_clicks_continuous(self, event=None):
-        current_time = time.time()
-        if current_time - self.last_click_time < self.click_delay:
-            return  # Skip if click delay threshold not met
-
-        if self.direction == -1:
-            self.saved_clicks = [(frame, x, y) for frame, x, y in self.saved_clicks if frame != self.frame_index]
-            self.clicks_in_current_frame += 1
-            self.last_click_time = current_time
-
-            self.frame_index -= self.frame_rate
-            self.clicks_in_current_frame = 0
-            if self.frame_index < 0:
-                self.frame_index = 0
-
-            # Render the updated frame for reverse playback
-            if self.cap.isOpened():
-                self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.frame_index)
-                ret, frame = self.cap.read()
-                if ret:
-                    frame_resized = cv2.resize(frame, (self.display_width, self.display_height))
-                    frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-
-                    img = Image.fromarray(frame_rgb)
-                    imgtk = ImageTk.PhotoImage(image=img)
-                    self.canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
-                    self.canvas.image = imgtk
-
-                    # Draw labels and clicks
-                    self.draw_labels()
-                    self.draw_saved_clicks()
-
-            if self.playing and self.direction == -1:
-                self.root.after(30, self.remove_clicks_continuous)
-
-    def update_cursor_location(self, event):
-        self.cursor_x, self.cursor_y = event.x, event.y
-
-    def add_label(self, event):
-        self.double_click_detected = True
-        label = simpledialog.askstring("Input", "Enter label:", parent=self.root)
-        if label:
-            click_position = (self.frame_index, event.x, event.y)
-            self.labels[click_position] = label
-
-    def draw_labels(self):
-        for (frame, x, y), label in self.labels.items():
-            if frame == self.frame_index:
-                self.canvas.create_text(x, y, text=label, fill="red", font=("Helvetica", 12))
-
-    def draw_saved_clicks(self):
-        for frame, x, y in self.saved_clicks:
-            if frame == self.frame_index:
-                self.canvas.create_oval(x - 5, y - 5, x + 5, y + 5, fill="blue", outline="white")
-
-    def save_clicks_to_csv(self):
-        # Save labeled positions to a CSV
-        labeled_data = [(self.filename, frame, x, y, label) for (frame, x, y), label in self.labels.items()]
-        click_data = [(self.filename, frame, x, y, "") for frame, x, y in self.saved_clicks]
-
-        # Merge both data sets
-        combined_data = labeled_data + click_data
-        df = pd.DataFrame(combined_data, columns=['VideoFile', 'Frame', 'X', 'Y', 'Label'])
-        df.to_csv("saved_clicks.csv", index=False)
-        print("Saved clicks and labels saved to saved_clicks.csv")
-
-    def set_frame_rate(self, new_rate):
-        if new_rate > 0:
-            self.frame_rate = new_rate
-            print(f"Frame rate updated to every {new_rate}-th frame.")
-        else:
-            print("Frame rate must be greater than 0.")
-
-    def set_clicks_required(self, new_clicks_required):
-        self.clicks_required = new_clicks_required
-        print(f"Clicks required to advance frame updated to {self.clicks_required}.")
-
-    def close_application(self):
+    def close_app(self, event=None):
+        self.save_clicks()
+        if self.cap:
+            self.cap.release()
         self.root.destroy()
 
-def setup_controls(root, video_player):
-    control_frame = tk.Frame(root)
-    control_frame.pack(fill=tk.X)
+    def load_video(self):
+        self.video_path = filedialog.askopenfilename(filetypes=[("Video files", "*.mp4 *.avi *.MP4")])
+        if self.video_path:
+            self.cap = cv2.VideoCapture(self.video_path)
+            if self.cap.isOpened():
+                self.load_first_frame()
 
-    play_button = tk.Button(control_frame, text="Play", command=video_player.start)
-    play_button.pack(side="left")
+    def load_first_frame(self):
+        if self.cap:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ret, self.frame = self.cap.read()
+            if ret:
+                self.root.update_idletasks()
+                self.display_frame()
 
-    pause_button = tk.Button(control_frame, text="Pause", command=video_player.pause)
-    pause_button.pack(side="left")
+    def update_loop(self):
+        if self.playing and self.cap and self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if not ret:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                return
+            self.frame = frame
+            self.display_frame()
+        self.root.after(30, self.update_loop)
 
-    close_button = tk.Button(control_frame, text="Close", command=video_player.close_application)
-    close_button.pack(side="left")
+    def display_frame(self):
+        if self.frame is None:
+            return
 
-    save_button = tk.Button(root, text="Save Clicks", command=video_player.save_clicks_to_csv)
-    save_button.pack(side="left")
+        win_width = self.root.winfo_width()
+        orig_width = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+        orig_height = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
-    frame_rate_slider = tk.Scale(control_frame, from_=1, to=60, orient="horizontal", label="Frame Rate (n-th frame)",
-                                 command=lambda val: video_player.set_frame_rate(int(val)))
-    frame_rate_slider.set(video_player.frame_rate)
-    frame_rate_slider.pack(side="left")
+        self.scale_factor_x = win_width / orig_width
+        scaled_height = int(orig_height * self.scale_factor_x)
+        self.scale_factor_y = scaled_height / orig_height
 
-    clicks_required_slider = tk.Scale(control_frame, from_=1, to=10, orient="horizontal", label="Clicks to Advance",
-                                      command=lambda val: video_player.set_clicks_required(int(val)))
-    clicks_required_slider.set(video_player.clicks_required)
-    clicks_required_slider.pack(side="left")
+        frame_resized = cv2.resize(self.frame, (win_width, scaled_height))
+        frame_resized = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+        frame_resized = cv2.putText(frame_resized, f"Frame: {self.frame_idx}", (20, 40),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+
+        img = Image.fromarray(frame_resized)
+        imgtk = ImageTk.PhotoImage(image=img)
+
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
+        self.canvas.imgtk = imgtk
+
+    def toggle_play(self):
+        self.playing = not self.playing
+        self.play_btn.config(text="Pause" if self.playing else "Play")
+
+    def stop_video(self):
+        if self.cap:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            self.load_first_frame()
+        self.playing = False
+        self.play_btn.config(text="Play")
+
+    def advance_frame(self):
+        if not self.cap:
+            return
+        self.frame_idx += self.frame_step
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.frame_idx)
+        ret, self.frame = self.cap.read()
+        if ret:
+            self.display_frame()
+        
+    def toggle_table(self):
+        if self.table.winfo_viewable():
+            self.table.pack_forget()
+            self.toggle_table_btn.config(text="Show Table")
+        else:
+            self.table.pack(fill=tk.BOTH, expand=True)
+            self.toggle_table_btn.config(text="Hide Table")
+
+        # Apply row colors
+        self.table.tag_configure('odd', background='white')
+        self.table.tag_configure('even', background='lightgray')
+
+        # Force window layout update and redraw the frame
+        self.root.update_idletasks()
+        self.display_frame()
+
+    def prev_frame(self):
+        if not self.cap:
+            return
+        self.frame_idx = max(0, self.frame_idx - self.frame_step)
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.frame_idx)
+        ret, self.frame = self.cap.read()
+        if ret:
+            self.display_frame()
+
+    def overwrite_click_if_exists(self, frame_idx, x_orig, y_orig, label):
+        for i, (video, frame, _, _, _) in enumerate(self.clicks):
+            if frame == frame_idx:
+                self.clicks[i] = (self.video_path, frame_idx, x_orig, y_orig, label)
+                # Update the table too
+                for item in self.table.get_children():
+                    if int(self.table.item(item)['values'][0]) == frame_idx:
+                        self.table.item(item, values=(frame_idx, x_orig, y_orig, label))
+                        return True
+        return False
+
+
+    def on_left_click(self, event):
+        if self.frame is None or not self.video_path:
+            return
+
+        label = self.label_entry.get()
+        frame_idx = self.frame_idx
+
+        x_orig = int(event.x / self.scale_factor_x)
+        y_orig = int(event.y / self.scale_factor_y)
+
+        # Check if click already exists at this frame
+        was_overwritten = self.overwrite_click_if_exists(frame_idx, x_orig, y_orig, label)
+        
+        if not was_overwritten:
+            new_click = (self.video_path, frame_idx, x_orig, y_orig, label)
+            self.clicks.append(new_click)
+
+            # Alternate row color by setting the tag
+            row_tag = 'odd' if self.row_count % 2 == 0 else 'even'
+            self.table.insert('', 'end', values=(frame_idx, x_orig, y_orig, label), tags=(row_tag,))
+            
+            # Increment row count
+            self.row_count += 1
+
+        print(f"{'Overwritten' if was_overwritten else 'Saved'}: Frame {frame_idx}, X: {x_orig}, Y: {y_orig}, Label: {label}")
+
+        self.advance_frame()
+
+
+    def on_right_click(self, event):
+        selected_item = self.table.selection()
+        if selected_item:
+            self.table.delete(selected_item)
+            if self.clicks:
+                self.clicks.pop()
+        self.frame_idx = max(0, self.frame_idx - self.frame_step)
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.frame_idx)
+        ret, self.frame = self.cap.read()
+        if ret:
+            self.display_frame()
+
+    def edit_table_entry(self, event):
+        selected_item = self.table.focus()
+        if not selected_item:
+            return
+        column = self.table.identify_column(event.x)
+        column_idx = int(column.replace('#', '')) - 1
+
+        old_value = self.table.item(selected_item)['values'][column_idx]
+        new_value = simpledialog.askstring("Edit", f"Current value: {old_value}\nEnter new value:")
+
+        if new_value is not None:
+            current_values = list(self.table.item(selected_item)['values'])
+            current_values[column_idx] = new_value
+            self.table.item(selected_item, values=current_values)
+
+            idx = self.table.index(selected_item)
+            click = list(self.clicks[idx])
+            click[column_idx + 1] = new_value
+            self.clicks[idx] = tuple(click)
+
+    def save_clicks(self):
+        df = pd.DataFrame(self.clicks, columns=["VideoFile", "Frame", "X", "Y", "Label"])
+        df.to_csv("clicks.csv", index=False)
+        print("Saved clicks to clicks.csv")
+
+    def set_frame_step(self, value):
+        self.frame_step = int(value)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Video Annotation Tool")
-    parser.add_argument('-v','--video', type=str, help='Path to the video file')
+    parser.add_argument("--video", type=str, help="Path to video file", default=None)
     args = parser.parse_args()
+
     root = tk.Tk()
-
-    video_path = args.video
-    if not video_path:
-        video_path = filedialog.askopenfilename(title="Select a Video", filetypes=("MP4 Files", "*.mp4"))
-        if not video_path:
-            exit()
-
-    video_player = VideoPlayer(root, video_path)
-    setup_controls(root, video_player)
-    video_player.play_video()
+    app = VideoAnnotator(root, args.video)
     root.mainloop()
