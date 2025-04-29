@@ -21,6 +21,8 @@ class VideoAnnotator:
         self.frame_step = 1
         self.clicks = []
         self.frame_idx = 0
+        self.max_annotations = 1  # Max number of annotations per frame
+        self.current_annotations = 0  # Number of annotations made so far for the current frame
 
         # UI Elements
         self.canvas = tk.Canvas(root)
@@ -68,6 +70,13 @@ class VideoAnnotator:
         self.root.bind("t", lambda e: self.toggle_table())
         self.root.bind("q", lambda e: self.close_app())
 
+        # Bind number keys for setting max annotations
+        self.root.bind("1", lambda e: self.set_max_annotations(1))
+        self.root.bind("2", lambda e: self.set_max_annotations(2))
+        self.root.bind("3", lambda e: self.set_max_annotations(3))
+        self.root.bind("4", lambda e: self.set_max_annotations(4))
+        self.root.bind("5", lambda e: self.set_max_annotations(5))
+
         # Table to display points
         self.table = ttk.Treeview(root, columns=("Frame", "X", "Y", "Label"), show="headings")
         for col in ("Frame", "X", "Y", "Label"):
@@ -87,6 +96,12 @@ class VideoAnnotator:
             self.load_first_frame()
 
         self.root.after(30, self.update_loop)
+
+    def set_max_annotations(self, number):
+        """Set the maximum number of annotations allowed per frame."""
+        self.max_annotations = number
+        self.current_annotations = 0  # Reset counter for the current frame
+        print(f"Max annotations per frame set to {number}")
 
     def close_app(self, event=None):
         self.save_clicks()
@@ -210,24 +225,30 @@ class VideoAnnotator:
         x_orig = int(event.x / self.scale_factor_x)
         y_orig = int(event.y / self.scale_factor_y)
 
-        # Check if click already exists at this frame
-        was_overwritten = self.overwrite_click_if_exists(frame_idx, x_orig, y_orig, label)
+        # Add the click as a new entry for the frame
+        new_click = (self.video_path, frame_idx, x_orig, y_orig, label)
+        self.clicks.append(new_click)
+
+        # Alternate row color by setting the tag
+        row_tag = 'odd' if self.row_count % 2 == 0 else 'even'
+        self.table.insert('', 'end', values=(frame_idx, x_orig, y_orig, label), tags=(row_tag,))
         
-        if not was_overwritten:
-            new_click = (self.video_path, frame_idx, x_orig, y_orig, label)
-            self.clicks.append(new_click)
+        # Increment row count and annotation count
+        self.row_count += 1
+        self.current_annotations += 1
 
-            # Alternate row color by setting the tag
-            row_tag = 'odd' if self.row_count % 2 == 0 else 'even'
-            self.table.insert('', 'end', values=(frame_idx, x_orig, y_orig, label), tags=(row_tag,))
-            
-            # Increment row count
-            self.row_count += 1
+        # Provide visual feedback for the click on the canvas
+        self.canvas.create_oval(
+            event.x - 5, event.y - 5, event.x + 5, event.y + 5, 
+            outline="red", width=2
+        )
 
-        print(f"{'Overwritten' if was_overwritten else 'Saved'}: Frame {frame_idx}, X: {x_orig}, Y: {y_orig}, Label: {label}")
+        print(f"Saved: Frame {frame_idx}, X: {x_orig}, Y: {y_orig}, Label: {label}")
 
-        self.advance_frame()
-
+        # Optional: Update the frame after click
+        if self.current_annotations >= self.max_annotations:
+            self.current_annotations = 0
+            self.advance_frame()
 
     def on_right_click(self, event):
         selected_item = self.table.selection()
