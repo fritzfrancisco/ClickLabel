@@ -79,6 +79,10 @@ class VideoAnnotator:
         self.root.bind("4", lambda e: self.set_max_annotations(4))
         self.root.bind("5", lambda e: self.set_max_annotations(5))
 
+        # Bind m and f keys for male and female labeling
+        self.root.bind("m", lambda e: self.set_label("Male"))
+        self.root.bind("f", lambda e: self.set_label("Female"))
+
         # Table to display points
         self.table = ttk.Treeview(root, columns=("Frame", "X", "Y", "Label"), show="headings")
         for col in ("Frame", "X", "Y", "Label"):
@@ -98,6 +102,11 @@ class VideoAnnotator:
             self.load_first_frame()
 
         self.root.after(30, self.update_loop)
+
+    def set_label(self, label):
+        """Set label to a given value"""
+        self.label_entry.delete(0,15)
+        self.label_entry.insert(0,label)
 
     def set_max_annotations(self, number):
         """Set the maximum number of annotations allowed per frame."""
@@ -300,7 +309,7 @@ class VideoAnnotator:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Video Annotation Tool")
-    parser.add_argument("--video", type=str, help="Path to video file", default=None)
+    parser.add_argument("-v", "--video", type=str, help="Path to video file", default=None)
     args = parser.parse_args()
 
     root = tk.Tk()
