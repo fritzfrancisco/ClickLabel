@@ -107,6 +107,7 @@ class VideoAnnotator:
         """Set label to a given value"""
         self.label_entry.delete(0,15)
         self.label_entry.insert(0,label)
+        self.play_btn.focus_set() # set focus to "Play" button
 
     def set_max_annotations(self, number):
         """Set the maximum number of annotations allowed per frame."""
